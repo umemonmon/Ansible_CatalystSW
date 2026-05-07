@@ -1,0 +1,20 @@
+# Logs
+*.log
+
+# Windows
+*Zone.Identifier*
+
+# Python
+__pycache__/
+*.pyc
+
+# VSCode
+.vscode/
+
+# Ansible
+*.retry
+
+# Secret
+vault.yml
+*.pem
+*.key
