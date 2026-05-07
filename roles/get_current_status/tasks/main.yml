@@ -1,0 +1,14 @@
+---
+## 現在のバージョンを確認
+- name: get_current_status
+  cisco.ios.ios_command:
+    commands:
+    - show version
+    - show inventory
+    - show boot
+    - "dir flash:"
+  register: current_status
+
+- name: Show command results
+  ansible.builtin.debug:
+    var: current_status.stdout_lines

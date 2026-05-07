@@ -1,0 +1,36 @@
+---
+## 現在のバージョンを確認
+- name: Check IOS Version
+  cisco.ios.ios_command:
+    commands:
+      - show version
+  register: show_version_result
+  changed_when: false
+
+#- name: Debug show version raw output
+#  ansible.builtin.debug:
+#    var: show_version_result.stdout[0]
+
+- name: Extract IOS version
+  ansible.builtin.set_fact:
+    current_ios_version: "{{ show_version_result.stdout[0] | regex_search('Version\\s+([^,\\s]+)', '\\1') | first }}"
+
+- name: Show extracted IOS version
+  ansible.builtin.debug:
+    msg: "Current IOS Version : {{ current_ios_version }}"
+
+- name: Add need update hosts
+  ansible.builtin.add_host:
+    name: "{{ inventory_hostname }}"
+    groups: need_update_catalystsw
+  when: current_ios_version != target_ios_version
+  changed_when: false
+
+- name: Show version check result
+  ansible.builtin.debug:
+    msg: >-
+      {% if current_ios_version == target_ios_version %}
+      OK : {{ inventory_hostname }} version is {{ current_ios_version }}
+      {% else %}
+      NG : {{ inventory_hostname }} version is {{ current_ios_version }} / target is {{ target_ios_version }}
+      {% endif %}

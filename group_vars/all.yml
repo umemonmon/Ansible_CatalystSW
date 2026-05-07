@@ -1,0 +1,5 @@
+---
+target_ios_version: "15.5(5)"
+target_ios_filename: "cat9k_lite_iosxe.17.15.05.SPA.bin"
+tftp_server_ip: "192.168.10.18"
+
