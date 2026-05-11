@@ -1,6 +1,7 @@
 ---
-# !!重要!!バンドルモード(Catalyst1000シリーズ等)での実施手順
-# TFTPサーバから firmware を flash へコピーする
+# Catalyst 1000シリーズ等のbundle mode向けファームウェア更新手順。
+
+# archive download-swでTFTPサーバからイメージを取得し、上書き更新とreloadを実行する。
 - name: Upgrade Catalyst1000 IOS
   cisco.ios.ios_command:
     commands:
@@ -8,27 +9,20 @@
           archive download-sw /overwrite /reload
           tftp://{{ tftp_server_ip }}/{{ target_ios_filename }}
   vars:
-    ansible_command_timeout: 1800
-
+    ansible_command_timeout: "{{ firmware_command_timeout }}"
   register: upgrade_result
 
-# reload を実行する。
-#
-# reload後、
-# SSH(22番) が復旧するまで待機する。
-#
-# Catalyst reboot は時間がかかるため
-# timeout は長めに設定する。
+# 更新処理に伴うreload後、SSH(22番)が復旧するまで待機する。
 - name: Wait for SSH recovery
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
     port: 22
-    delay: 60
-    timeout: 1800
+    delay: "{{ reload_wait_delay }}"
+    timeout: "{{ reload_wait_timeout }}"
+    sleep: "{{ reload_wait_sleep }}"
   delegate_to: localhost
 
-# reboot後、
-# show version を取得する。
+# reboot後、show versionを取得して更新後の状態を確認する。
 - name: Get upgraded version
   cisco.ios.ios_command:
     commands:
@@ -38,7 +32,7 @@
   delay: 30
   until: upgraded_version is succeeded
 
-# reboot後 version を表示する。
+# 取得した更新後のバージョン情報を表示する。
 - name: Show upgraded version
   ansible.builtin.debug:
     var: upgraded_version.stdout_lines
