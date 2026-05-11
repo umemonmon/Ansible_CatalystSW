@@ -3,3 +3,26 @@ target_ios_version: "15.5(5)"
 target_ios_filename: "cat9k_lite_iosxe.17.15.05.SPA.bin"
 tftp_server_ip: "192.168.10.100"
 
+# Ansible接続情報
+ansible_network_os: cisco.ios.ios
+ansible_connection: network_cli
+
+# Smart Licensing Using Policy / CSSMオフライン方式 設定値
+# license_level は network-essentials または network-advantage を指定する。
+license_level: "network-essentials"
+
+# true の場合、Playbook内で license_level に応じた addon dna-essentials または addon dna-advantage を付加する。
+use_dna_license: false
+
+# RUMファイルをコピーするTFTPサーバ側ディレクトリ。
+# 空文字の場合は TFTP ルート直下へコピーする。
+rum_file_dir: "rum"
+
+# ACKファイルを配置するTFTPサーバ側ディレクトリ。
+# 空文字の場合は TFTP ルート直下から取得する。
+tftp_ack_dir: "ack"
+
+# license boot level変更後のreload待機時間。
+reload_wait_delay: 60
+reload_wait_timeout: 600
+reload_wait_sleep: 15

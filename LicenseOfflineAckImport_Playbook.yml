@@ -1,0 +1,82 @@
+---
+# Catalyst 9000 シリーズ向け Smart Licensing Using Policy の CSSM オフライン方式 ACK 適用 Playbook
+#
+# 事前作業:
+# - LicenseOfflineInit_Playbook.yml で生成した RUM ファイルを CSSM ポータルへアップロードしてください。
+# - CSSM ポータルから ACK ファイルをダウンロードしてください。
+# - ACK_<ホスト名>_rum.txt を TFTP サーバの tftp_ack_dir 配下へ配置してください。
+
+- name: SSH Connection PreCheck
+  hosts: CatalystSW
+  gather_facts: no
+
+  become: true
+  become_method: enable
+
+  tasks:
+    # 既存RoleでSSH接続性を確認し、成功ホストのみ後続playの対象にする。
+    - name: Import ssh_connect_precheck role
+      ansible.builtin.import_role:
+        name: ssh_connect_precheck
+      tags: ssh_connect_precheck
+
+- name: Smart License Offline ACK Import
+  hosts: reachable_catalystsw
+  gather_facts: no
+
+  become: true
+  become_method: enable
+
+  tasks:
+    # ACKファイル名へ使う実ホスト名を取得する。
+    - name: Import get_hostname role
+      ansible.builtin.import_role:
+        name: get_hostname
+      tags: get_hostname
+
+    # TFTPサーバからACKファイルを機器flash:へコピーする。
+    # tftp_ack_dir が空の場合は tftp://x.x.x.x/ACK_xxx.txt の形式にする。
+    - name: ACK ファイルを TFTP から機器 flash へコピー
+      cisco.ios.ios_command:
+        commands:
+          - command: "copy tftp://{{ tftp_server_ip }}{% if tftp_ack_dir | length > 0 %}/{{ tftp_ack_dir | regex_replace('^/+', '') | regex_replace('/+$', '') }}{% endif %}/{{ ack_filename }} flash:{{ ack_filename }}"
+            prompt:
+              - "Destination filename"
+            answer:
+              - "\r"
+
+    # CSSMから取得したACKファイルをインポートする。
+    - name: ACK ファイルを Smart Licensing にインポート
+      cisco.ios.ios_command:
+        commands:
+          - "license smart import flash:{{ ack_filename }}"
+      register: ack_import_result
+
+    # ACK適用後のライセンス状態を確認する。
+    - name: ライセンス状態を確認
+      cisco.ios.ios_command:
+        commands:
+          - show license summary
+          - show license status
+          - show license all
+      register: license_final_result
+      changed_when: false
+
+    # IN USE と Last ACK received の確認に必要な出力を表示する。
+    - name: 最終確認結果を表示
+      ansible.builtin.debug:
+        msg:
+          - "show license summary:"
+          - "{{ license_final_result.stdout[0] }}"
+          - "show license status:"
+          - "{{ license_final_result.stdout[1] }}"
+          - "show license all:"
+          - "{{ license_final_result.stdout[2] }}"
+
+    # CSSMオフライン方式のACK適用完了を通知する。
+    - name: 処理完了メッセージ
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }} の ACK インポート処理が完了しました。"
+          - "show license summary / show license status で IN USE と Last ACK received が更新されていることを確認してください。"
+          - "ACK 適用後、通常はこの初期処理 Playbook による次回定期レポート作業は不要です。運用ポリシーに応じて必要時のみ RUM/ACK 処理を実施してください。"
