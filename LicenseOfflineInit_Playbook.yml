@@ -1,0 +1,146 @@
+---
+# Catalyst 9000 シリーズ向け Smart Licensing Using Policy の CSSM オフライン方式 初期設定 Playbook
+#
+# 既定の対象は inventory.ini の CatalystSW グループです。
+# 対象グループを変更する場合は、下記 1 つ目の hosts を変更してください。
+# SSH 接続に成功したホストのみ、既存の ssh_connect_precheck Role により reachable_catalystsw へ追加されます。
+#
+# 本 Playbook の範囲:
+# - SSH 接続プリチェック
+# - 機器ホスト名の取得
+# - license smart transport off の設定
+# - ライセンスブートレベル確認、必要時の設定変更と自動 reload
+# - RUM ファイル生成
+# - RUM ファイルを TFTP サーバへコピー
+# - CSSM ポータルでの手動アップロード/ACK取得案内
+#
+# ACK ファイルの取得、import、最終確認は LicenseOfflineAckImport_Playbook.yml で実施します。
+
+- name: SSH Connection PreCheck
+  hosts: CatalystSW
+  gather_facts: no
+
+  become: true
+  become_method: enable
+
+  tasks:
+    # 既存RoleでSSH接続性を確認し、成功ホストを reachable_catalystsw へ追加する。
+    # 接続失敗ホストは unreachable_catalystsw へ追加され、後続playから除外される。
+    - name: Import ssh_connect_precheck role
+      ansible.builtin.import_role:
+        name: ssh_connect_precheck
+      tags: ssh_connect_precheck
+
+- name: Smart License Offline Initialization
+  hosts: reachable_catalystsw
+  gather_facts: no
+
+  become: true
+  become_method: enable
+
+  tasks:
+    # RUM/ACK ファイル名へ使う実ホスト名を取得する。
+    - name: Import get_hostname role
+      ansible.builtin.import_role:
+        name: get_hostname
+      tags: get_hostname
+
+    # license_level と use_dna_license から投入する license boot level コマンドを組み立てる。
+    # addon のDNAライセンス種別は network-advantage の場合 dna-advantage、それ以外は dna-essentials とする。
+    - name: 希望する license boot level コマンドを生成
+      ansible.builtin.set_fact:
+        desired_license_boot_command: >-
+          license boot level {{ license_level }}{% if use_dna_license | bool %} addon {{ 'dna-advantage' if license_level is search('advantage') else 'dna-essentials' }}{% endif %}
+
+    # CSSM オフライン方式では transport off を先に設定する。
+    # 既存の license smart transport cslu などがある場合も、IOS-XE側の設定置換に任せる。
+    - name: Smart Licensing transport を off に設定
+      cisco.ios.ios_config:
+        lines:
+          - license smart transport off
+
+    # ライセンスブートレベルと現在のライセンス状態を確認する。
+    - name: 現在のライセンス設定と概要を確認
+      cisco.ios.ios_command:
+        commands:
+          - show running-config all | include license boot level
+          - show license summary
+      register: license_current_result
+      changed_when: false
+
+    # 現在の license boot level 行を抽出し、希望設定との差分判定に使う。
+    - name: 現在の license boot level を変数化
+      ansible.builtin.set_fact:
+        current_license_boot_command: "{{ license_current_result.stdout[0] | regex_search('license boot level .+') | default('', true) }}"
+        license_boot_change_required: "{{ (license_current_result.stdout[0] | regex_search('license boot level .+') | default('', true)) != desired_license_boot_command }}"
+
+    # 希望するライセンスブートレベルと異なる場合のみ設定を変更する。
+    - name: ライセンスブートレベルを設定
+      cisco.ios.ios_config:
+        lines:
+          - "{{ desired_license_boot_command }}"
+      when: license_boot_change_required | bool
+
+    # transport off と license boot level の設定を保存する。
+    - name: 設定保存
+      cisco.ios.ios_command:
+        commands:
+          - write memory
+
+    # ライセンスブートレベル変更を反映するため、自動的に reload を実行する。
+    # 実環境の IOS-XE 応答に合わせて prompt/answer は必要に応じて調整してください。
+    - name: ライセンスブートレベル反映のため reload を実行
+      cisco.ios.ios_command:
+        commands:
+          - command: reload
+            prompt:
+              - "Proceed with reload"
+              - "confirm"
+            answer:
+              - "y"
+              - "\r"
+      when: license_boot_change_required | bool
+
+    # reload 後にSSHが切断されるため、起動完了と再接続を待つ。
+    - name: reload 後の起動待機
+      ansible.builtin.wait_for_connection:
+        delay: "{{ reload_wait_delay }}"
+        timeout: "{{ reload_wait_timeout }}"
+        sleep: "{{ reload_wait_sleep }}"
+      when: license_boot_change_required | bool
+
+    # reload 後も変数を確実に使えるよう、機器ホスト名とファイル名を再取得する。
+    - name: reload 後にホスト名情報を再取得
+      ansible.builtin.import_role:
+        name: get_hostname
+      tags: get_hostname
+      when: license_boot_change_required | bool
+
+    # CSSMにアップロードするRUMレポートを機器flash:に生成する。
+    - name: RUM レポートを機器 flash に生成
+      cisco.ios.ios_command:
+        commands:
+          - "license smart save usage all file flash:{{ rum_filename }}"
+      register: rum_generate_result
+
+    # 転送方式はTFTPに統一する。
+    # rum_file_dir が空の場合は tftp://x.x.x.x/<file> の形式にする。
+    - name: RUM ファイルを TFTP サーバへコピー
+      cisco.ios.ios_command:
+        commands:
+          - command: "copy flash:{{ rum_filename }} tftp://{{ tftp_server_ip }}{% if rum_file_dir | length > 0 %}/{{ rum_file_dir | regex_replace('^/+', '') | regex_replace('/+$', '') }}{% endif %}/{{ rum_filename }}"
+            prompt:
+              - "Address or name of remote host"
+              - "Destination filename"
+            answer:
+              - "{{ tftp_server_ip }}"
+              - "\r"
+
+    # ここから先はCSSMポータルでの手動操作が必要になるため、手順を明示する。
+    - name: CSSM ポータル手動操作の案内
+      ansible.builtin.debug:
+        msg:
+          - "RUM ファイル {{ rum_filename }} を TFTP サーバ {{ tftp_server_ip }} の {{ rum_file_dir | default('/', true) }} へコピーしました。"
+          - "CSSM ポータルへ RUM ファイルを手動アップロードし、ACK ファイルをダウンロードしてください。"
+          - "ACK ファイル名は {{ ack_filename }} とし、TFTP サーバ {{ tftp_server_ip }} の {{ tftp_ack_dir | default('/', true) }} に配置してください。"
+          - "ACK 配置後、LicenseOfflineAckImport_Playbook.yml を実行してください。"

@@ -1,0 +1,50 @@
+# inventory.ini の CatalystSW グループに定義されたIPアドレスを対象に、
+# Ansible経由でCatalystへSSHログイン可能か事前確認を行う。
+# 接続成功したホストは reachable_catalystsw グループへ動的追加する。
+# 接続失敗したホストは unreachable_catalystsw グループへ動的追加する。
+
+
+# CatalystへSSH接続し、show clock コマンド実行可否を確認する。
+#
+# failed_when: false を指定することで、
+# SSH接続失敗時でもPlaybook全体を停止させず後続処理へ進める。
+#
+# changed_when: false を指定することで、
+# show clock を設定変更(change)扱いにしない。
+#
+# check_mode: false を指定することで、
+# ansible-playbook --check 実行時でも実際にSSH接続確認を行う。
+
+- name: Check Catalyst login
+  cisco.ios.ios_command:
+    commands:
+      - show clock
+  register: login_check
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# SSHログイン成功したホストを、
+# reachable_catalystsw という動的グループへ追加する。
+#
+# 後続Playではこのグループのみを対象に処理を行う。
+#
+# changed_when: false を指定することで、
+# inventory操作を change 扱いにしない。
+- name: Add reachable hosts
+  ansible.builtin.add_host:
+    name: "{{ inventory_hostname }}"
+    groups: reachable_catalystsw
+  when: not login_check.failed
+  changed_when: false
+
+# SSHログイン失敗したホストを、
+# unreachable_catalystsw という動的グループへ追加する。
+#
+# 将来的にCSV出力や障害レポート生成へ利用可能。
+- name: Add unreachable hosts
+  ansible.builtin.add_host:
+    name: "{{ inventory_hostname }}"
+    groups: unreachable_catalystsw
+  when: login_check.failed
+  changed_when: false

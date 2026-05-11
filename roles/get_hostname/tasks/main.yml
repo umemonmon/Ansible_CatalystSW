@@ -1,0 +1,22 @@
+---
+# Smart Licensing CSSMオフライン方式で使うRUM/ACKファイル名を、
+# 機器のhostnameから生成するための共通Role。
+
+# running-configからhostname行を取得する。
+- name: ホスト名設定行を取得
+  cisco.ios.ios_command:
+    commands:
+      - show running-config | include ^hostname
+  register: hostname_result
+  changed_when: false
+
+# hostname行から機器ホスト名を抽出し、取得できない場合はinventory_hostnameを利用する。
+- name: hostname 行から機器ホスト名を抽出
+  ansible.builtin.set_fact:
+    device_hostname: "{{ (hostname_result.stdout[0] | regex_findall('^hostname\\s+(\\S+)') | first) | default(inventory_hostname, true) }}"
+
+# 機器ホスト名を使い、CSSMオフライン方式で扱うRUM/ACKファイル名を標準化する。
+- name: RUM/ACK ファイル名を設定
+  ansible.builtin.set_fact:
+    rum_filename: "{{ device_hostname }}_rum.txt"
+    ack_filename: "ACK_{{ device_hostname }}_rum.txt"
