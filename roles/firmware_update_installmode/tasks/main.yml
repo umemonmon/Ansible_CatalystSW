@@ -1,6 +1,7 @@
 ---
-# !!重要!!インストールモード(Catalyst9000シリーズ等)での実施手順
-# TFTPサーバから firmware を flash へコピーする
+# Catalyst 9000シリーズ等のinstall mode向けファームウェア更新手順。
+
+# TFTPサーバからファームウェアイメージを機器のflash:へコピーする。
 - name: Copy firmware from TFTP server
   cisco.ios.ios_command:
     commands:
@@ -10,10 +11,10 @@
         answer:
           - "\r"
   vars:
-    ansible_command_timeout: 1800
+    ansible_command_timeout: "{{ firmware_command_timeout }}"
   register: copy_result
 
-# dir flash: を実行し、firmwareファイルが存在するか確認する。
+# flash:内のファイル一覧を取得し、コピーしたイメージが存在するか確認する。
 - name: Check firmware file exists
   cisco.ios.ios_command:
     commands:
@@ -21,9 +22,7 @@
   register: flash_result
   changed_when: false
 
-# flash内に firmware file が存在するか判定する。
-#
-# 存在しない場合はTask失敗。
+# 指定したファームウェアイメージがflash:に存在しない場合は処理を停止する。
 - name: Verify firmware file
   ansible.builtin.assert:
     that:
@@ -31,51 +30,37 @@
     success_msg: "Firmware file exists in flash"
     fail_msg: "Firmware file does not exist in flash"
 
-
-# インストール・再起動前に保存を行う。
-- name: Install firmware
+# インストール・再起動前に現在の設定を保存する。
+- name: Save running configuration
   cisco.ios.ios_command:
     commands:
       - "write memory"
 
-# install add file flash:xxx activate commit を実行する。
-#
-# install mode を使用する。
-#
-# activate:
-#   次回boot imageへ設定
-#
-# commit:
-#   boot変数へcommit
+# install add file flash:xxx activate commit を実行し、install modeでイメージを有効化する。
+# activate は新しいイメージを起動対象にし、commit は変更を確定する。
 - name: Install firmware
   cisco.ios.ios_command:
     commands:
       - "install add file flash:{{ target_ios_filename }} activate commit"
   vars:
-    ansible_command_timeout: 1800
+    ansible_command_timeout: "{{ firmware_command_timeout }}"
     prompt:
       - "This operation may require a reload of the system. Do you want to proceed?"
     answer:
       - "y"
   register: install_result
 
-# reload を実行する。
-#
-# reload後、
-# SSH(22番) が復旧するまで待機する。
-#
-# Catalyst reboot は時間がかかるため
-# timeout は長めに設定する。
+# install処理に伴うreload後、SSH(22番)が復旧するまで待機する。
 - name: Wait for SSH recovery
   ansible.builtin.wait_for:
     host: "{{ inventory_hostname }}"
     port: 22
-    delay: 30
-    timeout: 900
+    delay: "{{ reload_wait_delay }}"
+    timeout: "{{ reload_wait_timeout }}"
+    sleep: "{{ reload_wait_sleep }}"
   delegate_to: localhost
 
-# reboot後、
-# show version を取得する。
+# reboot後、show versionを取得して更新後の状態を確認する。
 - name: Get upgraded version
   cisco.ios.ios_command:
     commands:
@@ -85,12 +70,12 @@
   delay: 30
   until: upgraded_version is succeeded
 
-# reboot後 version を表示する。
+# 取得した更新後のバージョン情報を表示する。
 - name: Show upgraded version
   ansible.builtin.debug:
     var: upgraded_version.stdout_lines
 
-# 不要ファイルの削除
+# install modeで不要になったinactiveファイルを削除する。
 - name: Delete Old firmware
   cisco.ios.ios_command:
     commands:
